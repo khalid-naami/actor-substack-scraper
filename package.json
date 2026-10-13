@@ -1,0 +1,32 @@
+{
+  "name": "actor-substack-scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Substack Ultimate All-in-One Scraper on Apify. Extracts Newsletters, Articles (Markdown & Text), Publication Stats, Subscriber counts, Comments, Authors & Leads, and Global Keyword Search.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node src/main.js"
+  },
+  "keywords": [
+    "apify",
+    "actor",
+    "substack",
+    "substack-scraper",
+    "newsletters",
+    "articles",
+    "leads",
+    "ai-datasets",
+    "llm",
+    "crawlee",
+    "playwright"
+  ],
+  "author": "Khalil",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "apify": "^3.2.6",
+    "crawlee": "^3.12.2",
+    "got-scraping": "^4.0.7",
+    "playwright": "^1.49.1"
+  }
+}
