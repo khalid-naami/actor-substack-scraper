@@ -1,0 +1,78 @@
+{
+    "title": "Substack Ultimate Scraper Input Schema",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "mode": {
+            "title": "Scraping Mode",
+            "type": "string",
+            "description": "Select Substack extraction mode, or use AUTO_DETECT.",
+            "default": "AUTO_DETECT",
+            "editor": "select",
+            "enum": [
+                "AUTO_DETECT",
+                "PUBLICATIONS",
+                "POSTS",
+                "COMMENTS",
+                "SEARCH"
+            ],
+            "enumTitles": [
+                "Auto-Detect (From URLs)",
+                "Publications & Newsletters (Archive & Full Articles)",
+                "Specific Posts (Full Text, Reads, Likes & Authors)",
+                "Comments & Reader Discussions",
+                "Search Keywords (Discover Articles & Newsletters)"
+            ]
+        },
+        "targetUrls": {
+            "title": "Target Substack URLs",
+            "type": "array",
+            "description": "List of Substack Publication URLs (e.g. https://pragmaticengineer.com or https://astralcodexten.substack.com) or specific post URLs.",
+            "editor": "stringList",
+            "prefill": [
+                "https://thealgorithmicbridge.substack.com"
+            ]
+        },
+        "searchKeywords": {
+            "title": "Search Keywords / Queries",
+            "type": "array",
+            "description": "Keywords to discover Substack newsletters and articles across topics.",
+            "editor": "stringList",
+            "prefill": [
+                "artificial intelligence agents"
+            ]
+        },
+        "maxPosts": {
+            "title": "Maximum Posts Per Publication",
+            "type": "integer",
+            "description": "Maximum number of articles to extract per newsletter (0 for full archive).",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 5000
+        },
+        "maxComments": {
+            "title": "Maximum Comments Per Post",
+            "type": "integer",
+            "description": "Maximum reader comments to extract per article.",
+            "default": 20,
+            "minimum": 0,
+            "maximum": 1000
+        },
+        "extractFullText": {
+            "title": "Extract Full Article Body Text (AI Ready)",
+            "type": "boolean",
+            "description": "If enabled, extracts the complete article plain text and markdown for AI/LLM summarization and RAG.",
+            "default": true
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "type": "object",
+            "description": "Select Apify Proxy (RESIDENTIAL recommended for high volume scraping).",
+            "editor": "proxy",
+            "default": {
+                "useApifyProxy": true
+            }
+        }
+    },
+    "required": []
+}
