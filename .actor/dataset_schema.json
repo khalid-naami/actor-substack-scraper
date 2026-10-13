@@ -1,0 +1,128 @@
+{
+    "actorSpecification": 1,
+    "fields": {
+        "type": "object",
+        "properties": {
+            "type": {
+                "type": "string",
+                "title": "Entity Type"
+            },
+            "url": {
+                "type": "string",
+                "title": "Substack URL"
+            },
+            "id": {
+                "type": "string",
+                "title": "Post / Publication ID"
+            },
+            "title": {
+                "type": "string",
+                "title": "Article Title / Publication Name"
+            },
+            "subtitle": {
+                "type": "string",
+                "title": "Article Subtitle"
+            },
+            "slug": {
+                "type": "string",
+                "title": "Article Slug"
+            },
+            "bodyText": {
+                "type": "string",
+                "title": "Full Article Plain Text (AI / LLM Ready)"
+            },
+            "bodyHtml": {
+                "type": "string",
+                "title": "Full Article HTML"
+            },
+            "description": {
+                "type": "string",
+                "title": "Description / Excerpt"
+            },
+            "publicationName": {
+                "type": "string",
+                "title": "Publication Name"
+            },
+            "publicationUrl": {
+                "type": "string",
+                "title": "Publication URL"
+            },
+            "publicationLogoUrl": {
+                "type": "string",
+                "title": "Publication Logo URL"
+            },
+            "primaryAuthor": {
+                "type": "string",
+                "title": "Author Name"
+            },
+            "authors": {
+                "type": "array",
+                "title": "Authors List"
+            },
+            "coverImageUrl": {
+                "type": "string",
+                "title": "Cover Image URL"
+            },
+            "likesCount": {
+                "type": "integer",
+                "title": "Likes / Reactions Count"
+            },
+            "commentsCount": {
+                "type": "integer",
+                "title": "Comments Count"
+            },
+            "isPaid": {
+                "type": "boolean",
+                "title": "Is Paid / Paywalled"
+            },
+            "audience": {
+                "type": "string",
+                "title": "Target Audience (everyone, only_paid)"
+            },
+            "wordCount": {
+                "type": "integer",
+                "title": "Article Word Count"
+            },
+            "readingTimeMinutes": {
+                "type": "integer",
+                "title": "Reading Time (Minutes)"
+            },
+            "commentText": {
+                "type": "string",
+                "title": "Comment Text"
+            },
+            "commentAuthor": {
+                "type": "string",
+                "title": "Comment Author"
+            },
+            "email": {
+                "type": "string",
+                "title": "Contact Email"
+            },
+            "emails": {
+                "type": "array",
+                "title": "Extracted Emails"
+            },
+            "phones": {
+                "type": "array",
+                "title": "Extracted Phones"
+            },
+            "socialLinks": {
+                "type": "array",
+                "title": "Social Links"
+            },
+            "searchQuery": {
+                "type": "string",
+                "title": "Search Keyword"
+            },
+            "publishedAt": {
+                "type": "string",
+                "title": "Published Timestamp"
+            },
+            "scrapedAt": {
+                "type": "string",
+                "title": "Scraped At Timestamp"
+            }
+        }
+    }
+}
