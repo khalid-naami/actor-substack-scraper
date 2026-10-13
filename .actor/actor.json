@@ -1,0 +1,25 @@
+{
+    "actorSpecification": 1,
+    "name": "substack-ultimate-scraper",
+    "title": "Substack Ultimate Scraper (Newsletters, Full Articles, Comments & Search)",
+    "description": "Comprehensive all-in-one Substack data extractor. Extracts Newsletters & Publications, Full Article content (Markdown & Plain Text for AI/LLMs), Engagement metrics (Likes, Comments, Restacks), Reader Comments, and Keyword Search without login.",
+    "version": "1.0.0",
+    "meta": {
+        "templateId": "js-crawlee-playwright"
+    },
+    "dockerfile": "./Dockerfile",
+    "input": "./input_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json"
+    },
+    "output": "./output_schema.json",
+    "categories": [
+        "CONTENT",
+        "AI",
+        "LEAD_GENERATION",
+        "MARKETING"
+    ],
+    "environmentVariables": {
+        "APIFY_DISABLE_BROWSER_SANDBOX": "1"
+    }
+}
