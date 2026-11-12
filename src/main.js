@@ -2,232 +2,492 @@ import { Actor } from 'apify';
 import { gotScraping } from 'got-scraping';
 import { log } from 'crawlee';
 import {
+    sanitizeRecord,
+    normalizeSubstackUrl,
+    detectSubstackTargetType,
+    extractSearchQueryFromUrl,
+    extractPreloadsFromHtml,
     parsePostObject,
     parsePublicationMeta,
-    parseCommentsList
+    parseRssFeed,
+    parseCommentsList,
+    parseSearchItem
 } from './extractors.js';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 await Actor.init();
 
-const input = (await Actor.getInput()) || {};
-const {
-    mode = 'AUTO_DETECT',
-    targetUrls = [],
-    searchKeywords = [],
-    maxPosts = 30,
-    maxComments = 20,
-    extractFullText = true,
-    proxyConfiguration
-} = input;
-
-log.info('🚀 Starting Substack Ultimate Scraper...', {
-    mode,
-    targetUrlsCount: targetUrls.length,
-    searchKeywordsCount: searchKeywords.length,
-    maxPosts
-});
-
-const proxyConfig = proxyConfiguration ? await Actor.createProxyConfiguration(proxyConfiguration) : undefined;
-
-let urlsToProcess = [...targetUrls];
-let keywordsToProcess = [...searchKeywords];
-
-if (urlsToProcess.length === 0 && keywordsToProcess.length === 0) {
-    urlsToProcess = [
-        'https://thealgorithmicbridge.substack.com'
-    ];
-    log.info('ℹ️ No inputs provided. Defaulting to sample Substack target:', { urls: urlsToProcess });
+const diagnostics = [];
+function addDiagnostic(msg) {
+    if (msg && !diagnostics.includes(msg)) {
+        diagnostics.push(msg);
+    }
 }
 
-function buildHeaders() {
-    return {
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9'
-    };
-}
+try {
+    const input = (await Actor.getInput()) || {};
+    const {
+        mode = 'AUTO_DETECT',
+        targetUrls = [],
+        searchKeywords = [],
+        maxPosts = 30,
+        maxComments = 20,
+        extractFullText = true,
+        proxyConfiguration
+    } = input;
 
-async function fetchJson(url) {
-    const proxyUrl = proxyConfig ? await proxyConfig.newUrl() : undefined;
-    const response = await gotScraping({
-        url,
-        headers: buildHeaders(),
-        proxyUrl,
-        responseType: 'json',
-        timeout: { request: 25000 },
-        retry: { limit: 2 }
+    const targetMaxPosts = maxPosts === 0 ? Infinity : Math.max(1, Number(maxPosts) || 30);
+    const targetMaxComments = Math.max(0, Number(maxComments) ?? 20);
+
+    log.info('🚀 Starting Substack Ultimate Scraper...', {
+        mode,
+        targetUrlsCount: Array.isArray(targetUrls) ? targetUrls.length : 0,
+        searchKeywordsCount: Array.isArray(searchKeywords) ? searchKeywords.length : 0,
+        maxPosts,
+        maxComments: targetMaxComments,
+        extractFullText
     });
-    return response.body;
-}
 
-const stats = {
-    publications: 0,
-    posts: 0,
-    comments: 0,
-    searchResults: 0,
-    failed: 0
-};
-
-// 1. PROCESS TARGET URLS
-for (const rawUrl of urlsToProcess) {
-    const url = rawUrl.trim();
-    if (!url) continue;
-
-    try {
-        const parsedUrl = new URL(url);
-        const origin = parsedUrl.origin;
-        const isSinglePost = parsedUrl.pathname.includes('/p/');
-        const slugMatch = parsedUrl.pathname.match(/\/p\/([a-zA-Z0-9_-]+)/);
-        const postSlug = slugMatch ? slugMatch[1] : null;
-
-        log.info(`🎯 Processing Substack target: ${url} (Origin: ${origin})`);
-
-        // Fetch publication metadata
-        let pubMeta = {};
+    let proxyConfig;
+    if (proxyConfiguration) {
         try {
-            const pubData = await fetchJson(`${origin}/api/v1/publication`);
-            pubMeta = parsePublicationMeta(pubData, origin) || {};
-            if (pubMeta.publicationName) {
-                await Actor.pushData(pubMeta);
-                stats.publications++;
-                log.info(`📰 Scraped Publication: "${pubMeta.publicationName}" (${origin})`);
-            }
-        } catch (_) {}
+            proxyConfig = await Actor.createProxyConfiguration(proxyConfiguration);
+        } catch (err) {
+            log.warning(`⚠️ Proxy initialization failed (${err.message}). Continuing without Apify proxy.`);
+            addDiagnostic(`Proxy initialization skipped: ${err.message}`);
+            proxyConfig = undefined;
+        }
+    }
 
-        // CASE A: SPECIFIC POST
-        if (isSinglePost && postSlug) {
+    let rawTargets = Array.isArray(targetUrls) ? [...targetUrls] : [];
+    const keywordsQueue = Array.isArray(searchKeywords)
+        ? searchKeywords.map((k) => String(k || '').trim()).filter(Boolean)
+        : [];
+
+    if (rawTargets.length === 0 && keywordsQueue.length === 0) {
+        rawTargets = ['https://thealgorithmicbridge.substack.com'];
+        log.info('ℹ️ No inputs provided. Defaulting to sample Substack target:', { urls: rawTargets });
+    }
+
+    async function httpRequest(url, { accept = 'application/json, text/plain, */*', parseJson = false } = {}) {
+        const maxAttempts = proxyConfig ? 3 : 2;
+        let lastErr = null;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const proxyUrl = proxyConfig ? await proxyConfig.newUrl() : undefined;
             try {
-                const postData = await fetchJson(`${origin}/api/v1/posts/${postSlug}`);
-                const post = parsePostObject(postData, origin, pubMeta);
-                if (post) {
-                    await Actor.pushData(post);
-                    stats.posts++;
-                    log.info(`✅ Scraped Article: "${post.title}" [Words: ${post.wordCount}, Likes: ${post.likesCount}]`);
+                const res = await gotScraping({
+                    url,
+                    headerGeneratorOptions: {
+                        browsers: [{ name: 'chrome', minVersion: 124 }],
+                        operatingSystems: ['windows', 'macos']
+                    },
+                    headers: {
+                        'Accept': accept,
+                        'Accept-Language': 'en-US,en;q=0.9'
+                    },
+                    proxyUrl,
+                    responseType: 'text',
+                    throwHttpErrors: false,
+                    timeout: { request: 25000 },
+                    retry: { limit: 0 }
+                });
 
-                    // Extract comments
-                    if (maxComments > 0 && post.id) {
-                        try {
-                            const cData = await fetchJson(`${origin}/api/v1/posts/${post.id}/comments?sort=top`);
-                            const comments = parseCommentsList(cData?.comments?.slice(0, maxComments) || [], post.url, post.id);
-                            for (const c of comments) {
-                                await Actor.pushData(c);
-                            }
-                            stats.comments += comments.length;
-                            log.info(`💬 Extracted ${comments.length} comments for article: "${post.title}"`);
-                        } catch (_) {}
+                const statusCode = res.statusCode;
+                const bodyText = typeof res.body === 'string' ? res.body : String(res.body || '');
+                const lowerSnippet = bodyText.slice(0, 4096).toLowerCase();
+
+                const isCloudflare =
+                    lowerSnippet.includes('just a moment...') ||
+                    lowerSnippet.includes('cf-browser-verification') ||
+                    lowerSnippet.includes('cf-turnstile') ||
+                    lowerSnippet.includes('attention required! | cloudflare');
+
+                if (statusCode === 429 || (statusCode >= 500 && statusCode < 600) || isCloudflare) {
+                    const reason = isCloudflare
+                        ? `Cloudflare challenge (HTTP ${statusCode})`
+                        : `HTTP ${statusCode} from Substack`;
+                    lastErr = new Error(`${reason} on ${url}`);
+                    if (attempt + 1 < maxAttempts) {
+                        log.warning(`⏳ ${reason}. Retrying (${attempt + 1}/${maxAttempts})...`);
+                        await sleep(2000 * (attempt + 1));
+                        continue;
+                    }
+                    throw lastErr;
+                }
+
+                if (statusCode >= 400) {
+                    throw new Error(`HTTP ${statusCode} on ${url}: ${bodyText.slice(0, 160).replace(/\s+/g, ' ')}`);
+                }
+
+                if (parseJson) {
+                    try {
+                        const data = JSON.parse(bodyText);
+                        return { statusCode, finalUrl: res.url, data, text: bodyText };
+                    } catch (jsonErr) {
+                        throw new Error(`Invalid JSON response from ${url}: ${jsonErr.message}`);
                     }
                 }
+
+                return { statusCode, finalUrl: res.url, text: bodyText };
             } catch (err) {
-                log.error(`❌ Failed scraping single post ${url}: ${err.message}`);
-                stats.failed++;
+                lastErr = err;
+                if (attempt + 1 < maxAttempts && /timeout|ECONNRESET|ETIMEDOUT|socket/i.test(err.message)) {
+                    await sleep(1500);
+                    continue;
+                }
+                throw err;
             }
         }
 
-        // CASE B: PUBLICATION ARCHIVE (ENTIRE NEWSLETTER)
-        else {
-            let offset = 0;
+        throw lastErr || new Error(`Request failed for ${url}`);
+    }
+
+    async function fetchJson(url) {
+        const res = await httpRequest(url, {
+            accept: 'application/json, text/plain, */*',
+            parseJson: true
+        });
+        return res;
+    }
+
+    async function fetchPublicationContext(origin) {
+        let resolvedOrigin = origin;
+        let pubMeta = null;
+        let rssFallback = { publication: null, posts: [] };
+
+        // Primary: Homepage HTML embeds window._preloads inside <script id="preloads-json">
+        try {
+            const homeRes = await httpRequest(`${origin}/`, {
+                accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                parseJson: false
+            });
+            if (homeRes.finalUrl) {
+                try {
+                    resolvedOrigin = new URL(homeRes.finalUrl).origin;
+                } catch (_) {}
+            }
+            const preloads = extractPreloadsFromHtml(homeRes.text);
+            if (preloads?.pub) {
+                pubMeta = parsePublicationMeta(preloads.pub, resolvedOrigin);
+            }
+        } catch (err) {
+            log.debug(`Homepage _preloads lookup skipped for ${origin}: ${err.message}`);
+        }
+
+        // Secondary: RSS /feed for publication info (works cleanly across custom domains)
+        if (!pubMeta) {
+            try {
+                const feedRes = await httpRequest(`${resolvedOrigin}/feed`, {
+                    accept: 'application/rss+xml, application/xml, text/xml, */*',
+                    parseJson: false
+                });
+                rssFallback = parseRssFeed(feedRes.text, resolvedOrigin);
+                if (rssFallback.publication) {
+                    pubMeta = rssFallback.publication;
+                }
+            } catch (err) {
+                log.debug(`RSS fallback skipped for ${resolvedOrigin}: ${err.message}`);
+            }
+        }
+
+        return { resolvedOrigin, pubMeta: pubMeta || {}, rssPosts: rssFallback.posts };
+    }
+
+    async function fetchCommentsForPost(origin, postId, postUrl, maxLimit) {
+        if (!postId || maxLimit <= 0) return [];
+        const endpoints = [
+            `${origin}/api/v1/post/${postId}/comments?all_comments=true&sort=top`,
+            `${origin}/api/v1/posts/${postId}/comments?sort=top`
+        ];
+
+        for (let i = 0; i < endpoints.length; i++) {
+            try {
+                const res = await fetchJson(endpoints[i]);
+                if (Array.isArray(res.data?.comments)) {
+                    return parseCommentsList(res.data.comments, postUrl, postId, maxLimit);
+                }
+            } catch (err) {
+                if (i === endpoints.length - 1) {
+                    log.debug(`Comments fetch note for post ${postId}: ${err.message}`);
+                }
+            }
+        }
+        return [];
+    }
+
+    const stats = {
+        publications: 0,
+        posts: 0,
+        comments: 0,
+        searchResults: 0,
+        failed: 0
+    };
+
+    // 1. PROCESS TARGET URLS
+    for (const rawItem of rawTargets) {
+        const url = normalizeSubstackUrl(rawItem);
+        if (!url) {
+            log.warning('⚠️ Skipping invalid Substack URL:', { rawItem });
+            addDiagnostic(`Invalid Substack target URL skipped: ${JSON.stringify(rawItem)}`);
+            stats.failed++;
+            continue;
+        }
+
+        const currentMode = detectSubstackTargetType(url, mode);
+        if (currentMode === 'SEARCH') {
+            const q = extractSearchQueryFromUrl(url);
+            if (q) {
+                keywordsQueue.push(q);
+                continue;
+            }
+        }
+
+        try {
+            const parsedUrl = new URL(url);
+            const rawOrigin = parsedUrl.origin;
+            const slugMatch = parsedUrl.pathname.match(/\/p\/([a-zA-Z0-9_-]+)/);
+            const postSlug = slugMatch ? slugMatch[1] : null;
+
+            log.info(`🎯 Processing [${currentMode}]: ${url} (Origin: ${rawOrigin})`);
+
+            const { resolvedOrigin, pubMeta, rssPosts } = await fetchPublicationContext(rawOrigin);
+
+            if (currentMode === 'PUBLICATIONS' && !postSlug && pubMeta?.publicationName) {
+                await Actor.pushData(sanitizeRecord(pubMeta));
+                stats.publications++;
+                log.info(`📰 Scraped Publication: "${pubMeta.publicationName}" (${resolvedOrigin})`);
+            }
+
+            // CASE A: SPECIFIC POST URL (/p/<slug>)
+            if (postSlug) {
+                const postRes = await fetchJson(`${resolvedOrigin}/api/v1/posts/${postSlug}`);
+                const post = parsePostObject(postRes.data, resolvedOrigin, pubMeta, { extractFullText });
+                if (!post) {
+                    throw new Error(`Could not parse Substack post payload from ${url}`);
+                }
+                post.source = 'substack_api';
+
+                if (currentMode !== 'COMMENTS') {
+                    await Actor.pushData(sanitizeRecord(post));
+                    stats.posts++;
+                    log.info(`✅ Scraped Article: "${post.title}" [Words: ${post.wordCount || 0}, Likes: ${post.likesCount || 0}]`);
+                }
+
+                const commentQuota = currentMode === 'COMMENTS' && targetMaxComments === 0 ? 20 : targetMaxComments;
+                if (commentQuota > 0 && post.id && (currentMode === 'COMMENTS' || post.commentsCount > 0)) {
+                    const comments = await fetchCommentsForPost(resolvedOrigin, post.id, post.url, commentQuota);
+                    for (const c of comments) {
+                        c.source = 'substack_comments_api';
+                        await Actor.pushData(sanitizeRecord(c));
+                        stats.comments++;
+                    }
+                    log.info(`💬 Extracted ${comments.length} comments for "${post.title}"`);
+                }
+                continue;
+            }
+
+            // CASE B: PUBLICATION URL (Archive Posts + optional Comments)
+            let cursor = '';
             let collected = 0;
-            const limit = 25;
+            const limit = Number.isFinite(targetMaxPosts) ? Math.min(25, targetMaxPosts) : 25;
+            const seenCursors = new Set();
+            const seenPostIds = new Set();
+            let archiveFailedErr = null;
 
-            while (collected < maxPosts) {
-                const archiveUrl = `${origin}/api/v1/archive?sort=new&limit=${limit}&offset=${offset}`;
-                const archiveData = await fetchJson(archiveUrl);
+            while (collected < targetMaxPosts) {
+                const archiveUrl = cursor
+                    ? `${resolvedOrigin}/api/v1/archive?sort=new&limit=${limit}&cursor=${encodeURIComponent(cursor)}`
+                    : `${resolvedOrigin}/api/v1/archive?sort=new&limit=${limit}`;
 
-                if (!Array.isArray(archiveData) || archiveData.length === 0) break;
+                let archivePayload;
+                try {
+                    const res = await fetchJson(archiveUrl);
+                    archivePayload = res.data;
+                } catch (err) {
+                    archiveFailedErr = err;
+                    break;
+                }
 
-                for (const postObj of archiveData) {
-                    if (collected >= maxPosts) break;
+                const postsList = Array.isArray(archivePayload)
+                    ? archivePayload
+                    : (Array.isArray(archivePayload?.posts) ? archivePayload.posts : []);
+                const nextCursor = archivePayload?.nextCursor || '';
+
+                if (postsList.length === 0) break;
+
+                for (const postObj of postsList) {
+                    if (collected >= targetMaxPosts) break;
+                    const dedupId = String(postObj.id || postObj.slug || '');
+                    if (dedupId && seenPostIds.has(dedupId)) continue;
+                    if (dedupId) seenPostIds.add(dedupId);
 
                     let finalPostObj = postObj;
-                    // If full text is requested and body_html is missing from summary
-                    if (extractFullText && postObj.slug && !postObj.body_html) {
+                    const needsFullFetch = extractFullText && postObj.slug && !postObj.body_html && currentMode !== 'COMMENTS';
+                    if (needsFullFetch) {
                         try {
-                            const fullData = await fetchJson(`${origin}/api/v1/posts/${postObj.slug}`);
-                            if (fullData?.body_html) {
-                                finalPostObj = { ...postObj, ...fullData };
+                            const fullRes = await fetchJson(`${resolvedOrigin}/api/v1/posts/${postObj.slug}`);
+                            if (fullRes.data && typeof fullRes.data === 'object') {
+                                finalPostObj = { ...postObj, ...fullRes.data };
                             }
-                        } catch (_) {}
+                        } catch (fullErr) {
+                            log.debug(`Full body fetch note for ${postObj.slug}: ${fullErr.message}`);
+                        }
                     }
 
-                    const post = parsePostObject(finalPostObj, origin, pubMeta);
-                    if (post) {
-                        await Actor.pushData(post);
+                    const post = parsePostObject(finalPostObj, resolvedOrigin, pubMeta, { extractFullText });
+                    if (!post) continue;
+                    post.source = 'substack_archive_api';
+
+                    if (currentMode !== 'COMMENTS') {
+                        await Actor.pushData(sanitizeRecord(post));
                         collected++;
                         stats.posts++;
+                    }
 
-                        // Comments extraction
-                        if (maxComments > 0 && post.id) {
-                            try {
-                                const cData = await fetchJson(`${origin}/api/v1/posts/${post.id}/comments?sort=top`);
-                                const comments = parseCommentsList(cData?.comments?.slice(0, maxComments) || [], post.url, post.id);
-                                for (const c of comments) {
-                                    await Actor.pushData(c);
-                                }
-                                stats.comments += comments.length;
-                            } catch (_) {}
+                    const commentQuota = currentMode === 'COMMENTS' && targetMaxComments === 0 ? 20 : targetMaxComments;
+                    if (commentQuota > 0 && post.id && post.commentsCount > 0) {
+                        const comments = await fetchCommentsForPost(resolvedOrigin, post.id, post.url, commentQuota);
+                        for (const c of comments) {
+                            c.source = 'substack_comments_api';
+                            await Actor.pushData(sanitizeRecord(c));
+                            stats.comments++;
+                        }
+                        if (currentMode === 'COMMENTS') {
+                            collected++;
                         }
                     }
                 }
 
-                offset += limit;
-                log.info(`📜 Fetched ${collected}/${maxPosts} articles from ${pubMeta.publicationName || origin}...`);
-                if (archiveData.length < limit) break;
+                log.info(`📜 Processed ${collected}${Number.isFinite(targetMaxPosts) ? `/${targetMaxPosts}` : ''} items from ${pubMeta.publicationName || resolvedOrigin}...`);
+
+                if (!nextCursor || seenCursors.has(nextCursor)) break;
+                seenCursors.add(nextCursor);
+                cursor = nextCursor;
             }
 
-            log.info(`✅ Successfully scraped ${collected} articles from ${pubMeta.publicationName || origin}`);
-        }
-
-    } catch (err) {
-        log.error(`❌ Error processing ${url}: ${err.message}`);
-        stats.failed++;
-    }
-}
-
-// 2. PROCESS SEARCH KEYWORDS
-if (keywordsToProcess.length > 0) {
-    for (const keyword of keywordsToProcess) {
-        log.info(`🔍 Searching Substack for: "${keyword}"`);
-        try {
-            const searchApi = `https://substack.com/api/v1/reader/search?query=${encodeURIComponent(keyword)}`;
-            const res = await fetchJson(searchApi);
-            const results = res?.results || [];
-
-            let count = 0;
-            for (const item of results.slice(0, maxPosts)) {
-                const post = {
-                    type: 'SEARCH_RESULT',
-                    id: String(item.id || item.slug),
-                    title: item.title || item.name,
-                    subtitle: item.subtitle || item.description,
-                    url: item.canonical_url || item.url || (item.slug ? `https://substack.com/p/${item.slug}` : null),
-                    publicationName: item.publication?.name || null,
-                    primaryAuthor: item.author?.name || null,
-                    searchQuery: keyword,
-                    scrapedAt: new Date().toISOString()
-                };
-                await Actor.pushData(post);
-                count++;
-                stats.searchResults++;
+            // Fallback to RSS feed items if archive API was blocked or empty
+            if (collected === 0 && rssPosts.length > 0 && currentMode !== 'COMMENTS') {
+                log.warning(`⚠️ Archive API yielded 0 posts${archiveFailedErr ? ` (${archiveFailedErr.message})` : ''}; falling back to RSS feed (${rssPosts.length} posts).`);
+                for (const rssPost of rssPosts) {
+                    if (collected >= targetMaxPosts) break;
+                    await Actor.pushData(sanitizeRecord(rssPost));
+                    collected++;
+                    stats.posts++;
+                }
+            } else if (collected === 0 && archiveFailedErr) {
+                throw archiveFailedErr;
             }
 
-            log.info(`✅ Discovered and scraped ${count} search results for "${keyword}"`);
+            if (collected === 0 && stats.comments === 0) {
+                addDiagnostic(`No articles/comments extracted from ${resolvedOrigin}.`);
+                stats.failed++;
+            } else {
+                log.info(`✅ Finished ${pubMeta.publicationName || resolvedOrigin}: ${collected} articles processed.`);
+            }
         } catch (err) {
-            log.error(`❌ Search failed for "${keyword}": ${err.message}`);
+            log.error(`❌ Error processing ${url}: ${err.message}`);
+            addDiagnostic(`${url} -> ${err.message}`);
             stats.failed++;
         }
     }
+
+    // 2. PROCESS SEARCH KEYWORDS
+    if (keywordsQueue.length > 0) {
+        const searchLimit = Number.isFinite(targetMaxPosts) ? targetMaxPosts : 100;
+
+        for (const keyword of keywordsQueue) {
+            log.info(`🔍 Searching Substack for: "${keyword}"`);
+            try {
+                let cursor = '';
+                let count = 0;
+                const seenKeys = new Set();
+                const seenCursors = new Set();
+
+                while (count < searchLimit) {
+                    const searchApi = cursor
+                        ? `https://substack.com/api/v1/top/search?query=${encodeURIComponent(keyword)}&cursor=${encodeURIComponent(cursor)}`
+                        : `https://substack.com/api/v1/top/search?query=${encodeURIComponent(keyword)}`;
+
+                    const res = await fetchJson(searchApi);
+                    const items = Array.isArray(res.data?.items)
+                        ? res.data.items
+                        : (Array.isArray(res.data?.results) ? res.data.results : []);
+                    const nextCursor = res.data?.nextCursor || '';
+
+                    if (items.length === 0) break;
+
+                    for (const item of items) {
+                        if (count >= searchLimit) break;
+                        const parsed = parseSearchItem(item, keyword, { extractFullText });
+                        if (!parsed) continue;
+
+                        const dedupKey = item.entity_key || parsed.id;
+                        if (dedupKey && seenKeys.has(dedupKey)) continue;
+                        if (dedupKey) seenKeys.add(dedupKey);
+
+                        parsed.source = 'substack_search_api';
+                        await Actor.pushData(sanitizeRecord(parsed));
+                        count++;
+                        stats.searchResults++;
+                    }
+
+                    if (!nextCursor || seenCursors.has(nextCursor)) break;
+                    seenCursors.add(nextCursor);
+                    cursor = nextCursor;
+                }
+
+                if (count === 0) {
+                    log.warning(`⚠️ Search returned 0 results for "${keyword}".`);
+                    addDiagnostic(`Search "${keyword}" returned 0 results.`);
+                    stats.failed++;
+                } else {
+                    log.info(`✅ Discovered and scraped ${count} search results for "${keyword}"`);
+                }
+            } catch (err) {
+                log.error(`❌ Search failed for "${keyword}": ${err.message}`);
+                addDiagnostic(`Search "${keyword}" -> ${err.message}`);
+                stats.failed++;
+            }
+        }
+    }
+
+    const totalRecordsExtracted = stats.publications + stats.posts + stats.comments + stats.searchResults;
+    const status = totalRecordsExtracted === 0
+        ? 'FAILED'
+        : (stats.failed > 0 ? 'PARTIAL_SUCCESS' : 'COMPLETED');
+
+    const summary = {
+        status,
+        timestamp: new Date().toISOString(),
+        metrics: stats,
+        totalRecordsExtracted,
+        diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
+        message: totalRecordsExtracted === 0
+            ? 'Substack Ultimate Scraper extracted 0 records. See diagnostics for details.'
+            : (stats.failed > 0
+                ? 'Substack Ultimate Scraper completed with partial failures (check diagnostics).'
+                : 'Substack Ultimate Scraper completed successfully.')
+    };
+
+    await Actor.setValue('OUTPUT', summary);
+    log.info('🏁 Execution Finished. Executive Summary:', summary);
+
+    if (totalRecordsExtracted === 0) {
+        const reasonSummary = diagnostics[0] || 'All targets failed or returned 0 extractable records.';
+        await Actor.fail(`Extracted 0 Substack records. ${reasonSummary}`);
+    } else {
+        await Actor.exit();
+    }
+} catch (fatalErr) {
+    log.error(`💥 Fatal Actor error: ${fatalErr.message}`, { stack: fatalErr.stack });
+    await Actor.setValue('OUTPUT', {
+        status: 'FAILED',
+        timestamp: new Date().toISOString(),
+        totalRecordsExtracted: 0,
+        diagnostics: [fatalErr.message, ...diagnostics],
+        message: `Fatal error: ${fatalErr.message}`
+    }).catch(() => {});
+    await Actor.fail(fatalErr.message);
 }
-
-// Save summary report
-const summary = {
-    status: 'COMPLETED',
-    timestamp: new Date().toISOString(),
-    metrics: stats,
-    totalRecordsExtracted: stats.publications + stats.posts + stats.comments + stats.searchResults,
-    message: 'Substack Ultimate Scraper completed successfully.'
-};
-
-await Actor.setValue('OUTPUT', summary);
-log.info('🏁 Execution Finished. Executive Summary:', summary);
-
-await Actor.exit();
