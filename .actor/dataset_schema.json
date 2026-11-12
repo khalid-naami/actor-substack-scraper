@@ -1,7 +1,9 @@
 {
     "actorSpecification": 1,
     "fields": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
+        "additionalProperties": true,
         "properties": {
             "type": {
                 "type": "string",
@@ -14,6 +16,10 @@
             "id": {
                 "type": "string",
                 "title": "Post / Publication ID"
+            },
+            "postId": {
+                "type": "string",
+                "title": "Parent Post ID"
             },
             "title": {
                 "type": "string",
@@ -43,6 +49,10 @@
                 "type": "string",
                 "title": "Publication Name"
             },
+            "publicationSubdomain": {
+                "type": "string",
+                "title": "Publication Subdomain"
+            },
             "publicationUrl": {
                 "type": "string",
                 "title": "Publication URL"
@@ -51,13 +61,20 @@
                 "type": "string",
                 "title": "Publication Logo URL"
             },
+            "subscriberHint": {
+                "type": "string",
+                "title": "Subscriber / Ranking Tier"
+            },
             "primaryAuthor": {
                 "type": "string",
                 "title": "Author Name"
             },
             "authors": {
                 "type": "array",
-                "title": "Authors List"
+                "title": "Authors List",
+                "items": {
+                    "type": "object"
+                }
             },
             "coverImageUrl": {
                 "type": "string",
@@ -70,6 +87,10 @@
             "commentsCount": {
                 "type": "integer",
                 "title": "Comments Count"
+            },
+            "restacksCount": {
+                "type": "integer",
+                "title": "Restacks Count"
             },
             "isPaid": {
                 "type": "boolean",
@@ -95,25 +116,46 @@
                 "type": "string",
                 "title": "Comment Author"
             },
+            "commentHandle": {
+                "type": "string",
+                "title": "Comment Author Handle"
+            },
+            "commentLikes": {
+                "type": "integer",
+                "title": "Comment Likes"
+            },
             "email": {
                 "type": "string",
                 "title": "Contact Email"
             },
             "emails": {
                 "type": "array",
-                "title": "Extracted Emails"
+                "title": "Extracted Emails",
+                "items": {
+                    "type": "string"
+                }
             },
             "phones": {
                 "type": "array",
-                "title": "Extracted Phones"
+                "title": "Extracted Phones",
+                "items": {
+                    "type": "string"
+                }
             },
             "socialLinks": {
                 "type": "array",
-                "title": "Social Links"
+                "title": "Social Links",
+                "items": {
+                    "type": "string"
+                }
             },
             "searchQuery": {
                 "type": "string",
                 "title": "Search Keyword"
+            },
+            "source": {
+                "type": "string",
+                "title": "Extraction Source Engine"
             },
             "publishedAt": {
                 "type": "string",
@@ -122,6 +164,40 @@
             "scrapedAt": {
                 "type": "string",
                 "title": "Scraped At Timestamp"
+            }
+        }
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": [
+                    "type",
+                    "title",
+                    "publicationName",
+                    "primaryAuthor",
+                    "likesCount",
+                    "commentsCount",
+                    "wordCount",
+                    "audience",
+                    "url",
+                    "publishedAt"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "type": { "label": "Type", "format": "text" },
+                    "title": { "label": "Title", "format": "text" },
+                    "publicationName": { "label": "Publication", "format": "text" },
+                    "primaryAuthor": { "label": "Author", "format": "text" },
+                    "likesCount": { "label": "Likes", "format": "number" },
+                    "commentsCount": { "label": "Comments", "format": "number" },
+                    "wordCount": { "label": "Words", "format": "number" },
+                    "audience": { "label": "Audience", "format": "text" },
+                    "url": { "label": "URL", "format": "link" },
+                    "publishedAt": { "label": "Published", "format": "date" }
+                }
             }
         }
     }
