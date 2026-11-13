@@ -16,6 +16,11 @@ import {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function isProxyTransportError(errOrStatus) {
+    const msg = String(errOrStatus?.message || errOrStatus || '');
+    return errOrStatus === 597 || errOrStatus === 407 || /597|UPSTREAM407|407|Proxy responded with|tunneling socket/i.test(msg);
+}
+
 await Actor.init();
 
 const diagnostics = [];
@@ -66,8 +71,13 @@ try {
         : [];
 
     if (rawTargets.length === 0 && keywordsQueue.length === 0) {
-        rawTargets = ['https://thealgorithmicbridge.substack.com'];
-        log.info('ℹ️ No inputs provided. Defaulting to sample Substack target:', { urls: rawTargets });
+        if (mode === 'SEARCH') {
+            keywordsQueue.push('artificial intelligence agents');
+            log.info('ℹ️ No inputs provided in SEARCH mode. Defaulting to sample search keyword:', { keywords: keywordsQueue });
+        } else {
+            rawTargets = ['https://thealgorithmicbridge.substack.com'];
+            log.info('ℹ️ No inputs provided. Defaulting to sample Substack target:', { urls: rawTargets });
+        }
     }
 
     async function httpRequest(url, { accept = 'application/json, text/plain, */*', parseJson = false } = {}) {
@@ -96,6 +106,13 @@ try {
 
                 const statusCode = res.statusCode;
                 const bodyText = typeof res.body === 'string' ? res.body : String(res.body || '');
+
+                if (proxyUrl && (isProxyTransportError(statusCode) || isProxyTransportError(bodyText))) {
+                    log.warning(`⚠️ Proxy transport error (HTTP ${statusCode}); disabling broken proxy and retrying direct...`);
+                    proxyConfig = undefined;
+                    continue;
+                }
+
                 const lowerSnippet = bodyText.slice(0, 4096).toLowerCase();
 
                 const isCloudflare =
@@ -133,6 +150,11 @@ try {
                 return { statusCode, finalUrl: res.url, text: bodyText };
             } catch (err) {
                 lastErr = err;
+                if (proxyUrl && isProxyTransportError(err)) {
+                    log.warning(`⚠️ Proxy transport error (${err.message}); disabling broken proxy and retrying direct...`);
+                    proxyConfig = undefined;
+                    continue;
+                }
                 if (attempt + 1 < maxAttempts && /timeout|ECONNRESET|ETIMEDOUT|socket/i.test(err.message)) {
                     await sleep(1500);
                     continue;
@@ -183,7 +205,7 @@ try {
                     accept: 'application/rss+xml, application/xml, text/xml, */*',
                     parseJson: false
                 });
-                rssFallback = parseRssFeed(feedRes.text, resolvedOrigin);
+                rssFallback = parseRssFeed(feedRes.text, resolvedOrigin, { extractFullText });
                 if (rssFallback.publication) {
                     pubMeta = rssFallback.publication;
                 }
@@ -254,9 +276,11 @@ try {
 
             const { resolvedOrigin, pubMeta, rssPosts } = await fetchPublicationContext(rawOrigin);
 
+            let urlPubPushed = false;
             if (currentMode === 'PUBLICATIONS' && !postSlug && pubMeta?.publicationName) {
                 await Actor.pushData(sanitizeRecord(pubMeta));
                 stats.publications++;
+                urlPubPushed = true;
                 log.info(`📰 Scraped Publication: "${pubMeta.publicationName}" (${resolvedOrigin})`);
             }
 
@@ -291,6 +315,7 @@ try {
             // CASE B: PUBLICATION URL (Archive Posts + optional Comments)
             let cursor = '';
             let collected = 0;
+            let urlComments = 0;
             const limit = Number.isFinite(targetMaxPosts) ? Math.min(25, targetMaxPosts) : 25;
             const seenCursors = new Set();
             const seenPostIds = new Set();
@@ -353,6 +378,7 @@ try {
                             c.source = 'substack_comments_api';
                             await Actor.pushData(sanitizeRecord(c));
                             stats.comments++;
+                            urlComments++;
                         }
                         if (currentMode === 'COMMENTS') {
                             collected++;
@@ -380,7 +406,7 @@ try {
                 throw archiveFailedErr;
             }
 
-            if (collected === 0 && stats.comments === 0) {
+            if (collected === 0 && urlComments === 0 && !urlPubPushed) {
                 addDiagnostic(`No articles/comments extracted from ${resolvedOrigin}.`);
                 stats.failed++;
             } else {
