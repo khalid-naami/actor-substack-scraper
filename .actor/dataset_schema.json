@@ -73,7 +73,9 @@
                 "type": "array",
                 "title": "Authors List",
                 "items": {
-                    "type": "object"
+                    "type": "object",
+                    "required": [],
+                    "additionalProperties": true
                 }
             },
             "coverImageUrl": {
@@ -165,7 +167,8 @@
                 "type": "string",
                 "title": "Scraped At Timestamp"
             }
-        }
+        },
+        "required": []
     },
     "views": {
         "overview": {
@@ -187,16 +190,46 @@
             "display": {
                 "component": "table",
                 "properties": {
-                    "type": { "label": "Type", "format": "text" },
-                    "title": { "label": "Title", "format": "text" },
-                    "publicationName": { "label": "Publication", "format": "text" },
-                    "primaryAuthor": { "label": "Author", "format": "text" },
-                    "likesCount": { "label": "Likes", "format": "number" },
-                    "commentsCount": { "label": "Comments", "format": "number" },
-                    "wordCount": { "label": "Words", "format": "number" },
-                    "audience": { "label": "Audience", "format": "text" },
-                    "url": { "label": "URL", "format": "link" },
-                    "publishedAt": { "label": "Published", "format": "date" }
+                    "type": {
+                        "label": "Type",
+                        "format": "text"
+                    },
+                    "title": {
+                        "label": "Title",
+                        "format": "text"
+                    },
+                    "publicationName": {
+                        "label": "Publication",
+                        "format": "text"
+                    },
+                    "primaryAuthor": {
+                        "label": "Author",
+                        "format": "text"
+                    },
+                    "likesCount": {
+                        "label": "Likes",
+                        "format": "number"
+                    },
+                    "commentsCount": {
+                        "label": "Comments",
+                        "format": "number"
+                    },
+                    "wordCount": {
+                        "label": "Words",
+                        "format": "number"
+                    },
+                    "audience": {
+                        "label": "Audience",
+                        "format": "text"
+                    },
+                    "url": {
+                        "label": "URL",
+                        "format": "link"
+                    },
+                    "publishedAt": {
+                        "label": "Published",
+                        "format": "date"
+                    }
                 }
             }
         }
