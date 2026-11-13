@@ -48,7 +48,9 @@ export function decodeHtmlEntities(str) {
 
 export function parseSafeInt(value, fallback = 0) {
     if (value === null || value === undefined || value === '') return fallback;
-    const num = Number(value);
+    const cleaned = typeof value === 'string' ? value.replace(/,/g, '').trim() : value;
+    if (cleaned === '') return fallback;
+    const num = Number(cleaned);
     return Number.isFinite(num) ? Math.trunc(num) : fallback;
 }
 
@@ -216,10 +218,11 @@ export function parsePublicationMeta(pubObj, origin) {
 }
 
 // Fallback Publication + Post parser from Substack /feed RSS XML
-export function parseRssFeed(xml, origin) {
+export function parseRssFeed(xml, origin, options = {}) {
     if (!xml || typeof xml !== 'string' || !xml.includes('<rss')) {
         return { publication: null, posts: [] };
     }
+    const extractFullText = options.extractFullText !== false;
 
     const extractTag = (block, tag) => {
         const re = new RegExp(`<${tag}(?:\\s[^>]*)?>(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))</${tag}>`, 'i');
@@ -257,7 +260,8 @@ export function parseRssFeed(xml, origin) {
         const pubDate = extractTag(itemXml, 'pubDate');
         const desc = htmlToPlainText(extractTag(itemXml, 'description'));
         const contentHtml = extractTag(itemXml, 'content:encoded');
-        const bodyText = htmlToPlainText(contentHtml) || desc;
+        const fullPlain = htmlToPlainText(contentHtml) || desc;
+        const bodyText = extractFullText ? fullPlain : desc;
         const slug = link.match(/\/p\/([a-zA-Z0-9_-]+)/)?.[1] || undefined;
 
         let publishedAt;
@@ -266,7 +270,7 @@ export function parseRssFeed(xml, origin) {
             if (!Number.isNaN(parsedDate.getTime())) publishedAt = parsedDate.toISOString();
         }
 
-        const words = bodyText.split(/\s+/).filter(Boolean).length;
+        const words = fullPlain.split(/\s+/).filter(Boolean).length;
         posts.push(sanitizeRecord({
             type: 'POST',
             id: String(guid || slug || itemTitle),
@@ -274,7 +278,7 @@ export function parseRssFeed(xml, origin) {
             title: itemTitle,
             slug,
             bodyText: bodyText || undefined,
-            bodyHtml: contentHtml || undefined,
+            bodyHtml: extractFullText ? (contentHtml || undefined) : undefined,
             description: desc || undefined,
             publicationName: title || undefined,
             publicationUrl: origin,
